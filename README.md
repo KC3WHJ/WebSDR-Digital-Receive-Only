@@ -185,6 +185,11 @@ and kept the settings) and the **real FLDIGI 4.2, FLMSG 4.0 and FLAMP 2.2** (set
 transmission played into its virtual device in full, followed it to MFSK-32 and back
 by RSID, and never left receive).
 
+**Tested on the air.** In October 2026 the FLDIGI station monitored the live
+**AmRRON 20-meter net** through a WebSDR, on EmComm Tools Community R7: FLDIGI decoded
+the traffic, FLMSG opened a custom form and displayed its data, and FLAMP
+retrieved every part of a multipart message.
+
 Not covered by the test suite: the `apt install` step and CommStat's own
 `linuxinstall.sh` on a clean machine (they need sudo and a fresh system). If you
 try it on a fresh VM or a distribution not listed above, please report what you find.
