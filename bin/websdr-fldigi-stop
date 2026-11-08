@@ -62,6 +62,7 @@ if have pactl && pactl info >/dev/null 2>&1; then
     for s in "$FL_TXVOID" "$FL_SINK"; do
         if sink_module_loaded "$s"; then remove_null_sink "$s"; info "Removed $s."; else info "$s wasn't loaded."; fi
     done
+    forget_stream_targets "$FL_SINK"
 else
     info "No audio server reachable - nothing to remove."
 fi

@@ -31,7 +31,7 @@ OPT_CALL=""; OPT_GRID=""; OPT_STATE=""
 COMMSTAT_URL="${WEBSDR_JS8_COMMSTAT_URL:-https://github.com/mgochoa57/CommStat.git}"
 BIN_DIR="${WEBSDR_JS8_BIN_DIR:-$HOME/.local/bin}"
 RIG_NAME="WebSDR"     # the connector's name inside CommStat
-APT_PACKAGES="js8call git dialog pulseaudio-utils python3 ca-certificates curl"
+APT_PACKAGES="js8call git dialog pulseaudio-utils python3 ca-certificates curl wmctrl"
 FLDIGI_PACKAGES="fldigi flmsg flamp"
 
 while [ $# -gt 0 ]; do
@@ -197,7 +197,15 @@ if [ "$WITH_FLDIGI" = 1 ]; then
     install -m 0755 "$HERE/bin/websdr-fldigi-start" "$HERE/bin/websdr-fldigi-stop" \
         "$HERE/bin/websdr-flmsg" "$HERE/bin/websdr-flamp" "$BIN_DIR/"
     info "Installed websdr-fldigi-start, websdr-fldigi-stop, websdr-flmsg and websdr-flamp in $BIN_DIR"
+    install -m 0755 "$HERE/bin/amrron-rx-test" "$BIN_DIR/"
+    info "Installed amrron-rx-test (one-click receive test with recorded AmRRON audio) in $BIN_DIR"
 fi
+# SDRangel launchers: installed either way (they're small and do nothing until SDRangel is
+# installed); their shortcuts are only created when SDRangel is.
+install -m 0755 "$HERE/bin/sdrangel-rx-start" "$HERE/bin/sdrangel-rx-stop" \
+    "$HERE/bin/sdrangel-js8-start" "$HERE/bin/sdrangel-js8-stop" "$BIN_DIR/"
+[ "$WITH_FLDIGI" = 1 ] && install -m 0755 "$HERE/bin/sdrangel-fldigi-start" "$HERE/bin/sdrangel-fldigi-stop" "$BIN_DIR/"
+info "Installed the SDRangel launchers (sdrangel-rx-start / sdrangel-rx-stop and shortcuts) in $BIN_DIR"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) warn "$BIN_DIR isn't on your PATH yet - log out and back in, or run: export PATH=\"$BIN_DIR:\$PATH\"" ;; esac
 
 APPS_DIR="$DATA_HOME/applications"
@@ -227,6 +235,27 @@ if [ "$WITH_FLDIGI" = 1 ]; then
     make_desktop "$APPS_DIR/websdr-fldigi-stop.desktop"  "Stop WebSDR FLDIGI + FLMSG/FLAMP" \
         "Stops the receive-only FLDIGI station and removes its virtual audio devices" "$BIN_DIR/websdr-fldigi-stop" process-stop
     SHORTCUTS="$SHORTCUTS websdr-fldigi-start websdr-fldigi-stop"
+    make_desktop "$APPS_DIR/amrron-rx-test.desktop" "AmRRON Receive Test" \
+        "Decode a recorded AmRRON transmission from your browser with the receive-only FLDIGI, FLMSG and FLAMP" \
+        "$BIN_DIR/amrron-rx-test" "${fl_icon:-fldigi}"
+    SHORTCUTS="$SHORTCUTS amrron-rx-test"
+fi
+if have sdrangel; then
+    sdr_icon=sdrangel_icon
+    make_desktop "$APPS_DIR/sdrangel-js8-start.desktop" "Start SDRangel JS8Call + CommStat" \
+        "Receive-only JS8Call and CommStat fed by SDRangel's KiwiSDR input" "$BIN_DIR/sdrangel-js8-start" "$sdr_icon"
+    make_desktop "$APPS_DIR/sdrangel-js8-stop.desktop" "Stop SDRangel JS8Call + CommStat" \
+        "Closes SDRangel and stops the receive-only JS8Call station" "$BIN_DIR/sdrangel-js8-stop" process-stop
+    SHORTCUTS="$SHORTCUTS sdrangel-js8-start sdrangel-js8-stop"
+    if [ "$WITH_FLDIGI" = 1 ]; then
+        make_desktop "$APPS_DIR/sdrangel-fldigi-start.desktop" "Start SDRangel FLDIGI + FLMSG/FLAMP" \
+            "Receive-only FLDIGI, FLMSG and FLAMP fed by SDRangel's KiwiSDR input" "$BIN_DIR/sdrangel-fldigi-start" "${fl_icon:-fldigi}"
+        make_desktop "$APPS_DIR/sdrangel-fldigi-stop.desktop" "Stop SDRangel FLDIGI + FLMSG/FLAMP" \
+            "Closes SDRangel and stops the receive-only FLDIGI station" "$BIN_DIR/sdrangel-fldigi-stop" process-stop
+        SHORTCUTS="$SHORTCUTS sdrangel-fldigi-start sdrangel-fldigi-stop"
+    fi
+else
+    info "SDRangel isn't installed, so its shortcuts were skipped (install it, then run install.sh again)."
 fi
 info "Added the launchers to your applications menu."
 if [ "$DESKTOP_ICONS" = 1 ]; then
@@ -279,6 +308,12 @@ EOF
 FLDIGI + FLMSG + FLAMP works the same way, and can run at the same time:
   websdr-fldigi-start / websdr-fldigi-stop  (or the "WebSDR FLDIGI" icons)
   Its settings are created on first start - from a copy of ~/.fldigi if you have one.
+  To try it without a web SDR: amrron-rx-test (the "AmRRON Receive Test" icon).
+EOF
+have sdrangel && cat <<EOF
+
+SDRangel is installed, so either station can also be fed from its KiwiSDR input:
+  sdrangel-js8-start / sdrangel-fldigi-start  (and the matching stop commands and icons)
 EOF
 cat <<EOF
 

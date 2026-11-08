@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Shortcut: sdrangel-rx-stop js8
+exec "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/sdrangel-rx-stop" js8 "$@"

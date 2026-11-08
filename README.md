@@ -26,6 +26,18 @@ listening only.
 The two stations are independent: run either, or both at once (two browser tabs on
 two frequencies).
 
+Two optional extras:
+
+- **SDRangel instead of a browser.** If you have [SDRangel](https://www.sdrangel.org/)
+  installed, its KiwiSDR input can feed either station: `sdrangel-js8-start` /
+  `sdrangel-fldigi-start` start the station, open SDRangel, point its SSB demodulator at
+  the station's virtual audio device and connect to the KiwiSDR, with a speaker loopback
+  so you hear it too.
+- **A one-click receive test.** `amrron-rx-test` (the *AmRRON Receive Test* icon) starts
+  the FLDIGI station, sends your browser's audio into it, and you play one of AmRRON's
+  recorded training transmissions on YouTube. It checks the whole FLDIGI/FLMSG/FLAMP chain
+  without a web SDR or a live net.
+
 *This project was called **JS8Call-CommStat-Receive-Only** before the FLDIGI station
 was added. GitHub redirects the old address, and existing installs keep working.*
 
@@ -42,6 +54,8 @@ was added. GitHub redirects the old address, and existing installs keep working.
 - A guided step that routes the browser tab playing the WebSDR into the decoder.
 - **The programs detach from the terminal**, so closing the launcher's window
   doesn't kill them.
+- Optional **SDRangel launchers** (`sdrangel-js8-start` / `-stop`, `sdrangel-fldigi-start` /
+  `-stop`) and a **one-click receive test** for the FLDIGI station (`amrron-rx-test`).
 
 ## Receive-only, by design
 
@@ -120,14 +134,14 @@ Run `./preflight.sh --help` for its options.
 
 | Item | Location |
 |---|---|
-| Packages | `js8call`, `fldigi`, `flmsg`, `flamp`, `git`, `dialog`, `pulseaudio-utils`, `python3`, `curl`, plus whatever CommStat's own installer needs. Programs you already have (e.g. EmComm Tools' own builds) are kept, not replaced. |
+| Packages | `js8call`, `fldigi`, `flmsg`, `flamp`, `git`, `dialog`, `pulseaudio-utils`, `python3`, `curl`, `wmctrl`, plus whatever CommStat's own installer needs. Programs you already have (e.g. EmComm Tools' own builds) are kept, not replaced. |
 | CommStat | `~/.local/share/websdr-js8/CommStat` (cloned from GitHub) |
 | JS8Call profile | `~/.config/JS8Call - WebSDR.ini` |
 | FLDIGI settings | `~/.fldigi-websdr` (created at first start - a copy of `~/.fldigi` if you have one, so macros and the frequency list carry over) |
 | FLMSG / FLAMP settings and received messages | `~/.nbems-websdr` (FLAMP in its `FLAMP/` subfolder) |
 | Settings | `~/.config/websdr-js8/config` |
-| Launchers | `~/.local/bin/websdr-js8-start`, `websdr-js8-stop`, `websdr-js8-watch-sink`, `websdr-fldigi-start`, `websdr-fldigi-stop`, `websdr-flmsg`, `websdr-flamp`, and menu/Desktop shortcuts |
-| Logs | `~/.local/share/websdr-js8/js8call.log`, `commstat.log`, `routing-watcher.log`, and `fldigi/` for the FLDIGI station |
+| Launchers | `~/.local/bin/websdr-js8-start`, `websdr-js8-stop`, `websdr-js8-watch-sink`, `websdr-fldigi-start`, `websdr-fldigi-stop`, `websdr-flmsg`, `websdr-flamp`, `amrron-rx-test`, `sdrangel-rx-start`, `sdrangel-rx-stop` and the `sdrangel-js8-*` / `sdrangel-fldigi-*` shortcuts, plus menu/Desktop shortcuts (the SDRangel ones only when SDRangel is installed) |
+| Logs | `~/.local/share/websdr-js8/js8call.log`, `commstat.log`, `routing-watcher.log`, `sdrangel.log`, and `fldigi/` for the FLDIGI station |
 
 Re-running the installer is safe: it keeps an existing JS8Call profile, an
 existing CommStat database, any connector already present, and existing FLDIGI
@@ -164,6 +178,12 @@ Installed packages are left alone; remove them with `apt` if you want. Your norm
   is configured; that's FLDIGI's own behavior.
 - **RSID does the mode switching.** FLDIGI's receive RSID stays on, so it follows a
   net that changes modes (e.g. Contestia for the net, MFSK-32 for FLMSG/FLAMP traffic).
+- **Keep FLDIGI's AFC off for MFSK.** MFSK-32's tones are only about 31 Hz apart, so AFC
+  wandering 15-20 Hz garbles FLMSG and FLAMP traffic. A middle-click on the waterfall
+  toggles AFC; the receive test turns it back off if that happens.
+- **AmRRON frequencies and net settings aren't included.** They come from AmRRON's
+  Communications SOI, which may only be shared with its author's permission. Build
+  FLDIGI's frequency list from your own copy - [docs/USAGE.md](docs/USAGE.md) shows how.
 - **JS8Call's title bar always says "de KN4CRD".** That is the JS8Call author's callsign,
   built into the title of every JS8Call window (its format string is literally
   `%1 de KN4CRD (v%2)`). It is not your callsign and not a setting; yours is shown in the
@@ -171,12 +191,16 @@ Installed packages are left alone; remove them with `apt` if you want. Your norm
 
 ## Testing
 
-`tests/run-tests.sh` runs 110 checks with no sudo, GUI or internet: prerequisite
+`tests/run-tests.sh` runs 144 checks with no sudo, GUI or internet: prerequisite
 failures, the installer, idempotency, launcher start/stop for both stations, audio
 routing and the stray-stream watcher, terminal-close survival, duplicate audio
 devices, the receive-only guards, FLDIGI's settings copy (rig control, PTT and
 spotting switched off; the normal `~/.fldigi` untouched; a fresh setup when there is
-none), and uninstall. It uses stand-ins for the GUIs (but CommStat's real database
+none), TxID switched off, a busy FLDIGI port caught before starting, the saved browser
+routing cleared at stop, the SDRangel launchers (against a stand-in SDRangel REST API:
+start order, switching stations, keeping your demodulator settings, the speaker
+loopback, and refusing an SDRangel opened too early), the one-click receive test (stream
+routing, the AFC guard, clean-up), and uninstall. It uses stand-ins for the GUIs (but CommStat's real database
 template and connector code) and its own profile name, ports and audio devices, so
 it can run beside a live install. Separate end-to-end checks ran the **real JS8Call
 binary** with the generated profile (it started without a wizard, answered its API,
@@ -189,6 +213,12 @@ by RSID, and never left receive).
 **AmRRON 20-meter net** through a WebSDR, on EmComm Tools Community R7: FLDIGI decoded
 the traffic, FLMSG opened a custom form and displayed its data, and FLAMP
 retrieved every part of a multipart message.
+
+In November 2026, on Linux Mint 22.3, the SDRangel launchers fed both stations from
+public KiwiSDRs (JS8 on 40 m; FLDIGI decoded the DWD RTTY weather broadcast on 10.1008
+MHz). With the same browser-to-FLDIGI routing the receive test uses, the FLDIGI station
+decoded AmRRON's recorded Contestia, MFSK-32, FLMSG and FLAMP transmissions from YouTube,
+with the FLMSG form displayed and the FLAMP file saved complete.
 
 Not covered by the test suite: the `apt install` step and CommStat's own
 `linuxinstall.sh` on a clean machine (they need sudo and a fresh system). If you
@@ -210,5 +240,7 @@ include or redistribute it.
 - **JS8Call** - Jordan Sherer (KN4CRD) and contributors, GPL-3.0.
 - **CommStat** - Manuel Ochoa (N0DDK), GPL-3.0, <https://github.com/mgochoa57/CommStat>.
 - **FLDIGI, FLMSG, FLAMP** - Dave Freese (W1HKJ), Robert Stiles (KK5VD) and contributors, GPL-3.0, <http://www.w1hkj.com/>.
+- **SDRangel** (optional, not installed by this project) - Edouard Griffiths (F4EXB) and contributors, GPL-3.0, <https://www.sdrangel.org/>.
+- The receive test's recordings are **AmRRON**'s own training videos, linked, not copied.
 
 The scripts in this repository are released under the MIT License (see `LICENSE`).

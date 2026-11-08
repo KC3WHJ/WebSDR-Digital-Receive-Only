@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# One-click receive test for the FLDIGI station: play a recorded AmRRON transmission in your
+# browser and decode it with the receive-only FLDIGI + FLMSG + FLAMP - no radio, no web SDR.
+#
+#   amrron-rx-test
+#
+#   1. Stops the FLDIGI station if it's running (SDRangel-fed or not), so nothing else mixes in
+#   2. Checks FLDIGI's control port is free (a browser window FLMSG opened can hold it)
+#   3. Starts the station: Contestia 4/250 at 900 Hz, AFC off, reverse off, TxID off
+#   4. A speaker loopback, so you hear the test
+#   5. While the test runs: moves every browser audio stream into FLDIGI, and switches AFC
+#      back off if it gets turned on (AFC drift garbles MFSK-32)
+#   6. Press Enter (or close the window): the browser goes back to the speakers, its saved
+#      routing is cleared, everything is shut down, and files received are listed
+#
+# Test recordings (AmRRON's "Receiving HF Digital" videos on YouTube; start at the time shown):
+#   FLDIGI  https://youtu.be/ChaHOpwouJw?t=997
+#   FLMSG   https://youtu.be/8W7oApIU4O8?t=737
+#   FLAMP   https://youtu.be/TFRbFlx2uZo?t=928
+#
+# Environment: AMRRON_TEST_MODE (default Cont-4/250), AMRRON_TEST_CARRIER (900),
+# AMRRON_TEST_BROWSERS (regular expression of program names whose audio is routed).
+set -u
+
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+_here="$(dirname "$_self")"
+APP=""
+for c in "${WEBSDR_JS8_APP_DIR:-}" "$_here/.." "${XDG_DATA_HOME:-$HOME/.local/share}/websdr-js8/app"; do
+    [ -n "$c" ] && [ -f "$c/lib/common.sh" ] && { APP="$(cd "$c" && pwd)"; break; }
+done
+[ -n "$APP" ] || { echo "ERROR: can't find WebSDR-Digital-Receive-Only's lib/ - has it been installed?" >&2; exit 1; }
+# shellcheck source=../lib/common.sh
+. "$APP/lib/common.sh"
+load_config
+
+case "${1:-}" in -h|--help) sed -n '2,23p' "$_self" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+[ -x "$_here/websdr-fldigi-start" ] || die "the FLDIGI station isn't installed (install.sh without --no-fldigi)."
+
+MODEM="${AMRRON_TEST_MODE:-Cont-4/250}"
+CARRIER="${AMRRON_TEST_CARRIER:-900}"
+BROWSERS="${AMRRON_TEST_BROWSERS:-chromium|chromium-browser|chrome|google-chrome|brave|firefox|firefox-bin|firefox-esr}"
+LOOP_NAME="${SDRANGEL_LOOP_NAME:-SDRangel-monitor}"   # same name, so sdrangel-rx-stop removes it too
+rpc() { fldigi_rpc "$FL_XMLRPC_PORT" "$1"; }
+# Sink-input id and current sink of every stream from a browser.
+browser_streams() {
+    pactl -f json list sink-inputs 2>/dev/null | python3 -I -c '
+import json, re, sys
+want = re.compile(r"^(%s)$" % sys.argv[1])
+for i in json.load(sys.stdin):
+    if want.match(i.get("properties", {}).get("application.process.binary", "")):
+        print(i["index"], i["sink"])' "$BROWSERS"
+}
+sink_index() { pactl list short sinks 2>/dev/null | awk -v n="$1" '$2==n {print $1}'; }
+
+CLEANED=0
+cleanup() {
+    [ "$CLEANED" = 1 ] && return; CLEANED=1
+    step "Finishing the test"
+    local def id _s h
+    def="$(pactl get-default-sink 2>/dev/null)"
+    while read -r id _s; do
+        [ -n "$id" ] && pactl move-sink-input "$id" "$def" 2>/dev/null && info "Browser audio back to the speakers."
+    done < <(browser_streams)
+    for m in $(pactl list modules short 2>/dev/null | awk -v n="$LOOP_NAME" '$2=="module-loopback" && index($0, "media.name=" n) {print $1}'); do
+        pactl unload-module "$m" 2>/dev/null
+    done
+    # websdr-fldigi-stop also forgets the browser's saved routing into FLDIGI's device.
+    timeout 60 "$_here/websdr-fldigi-stop" | grep -E "Stopped|Removed|Cleared|forced|without" | sed 's/^/  /'
+    h="$(port_holders "$FL_XMLRPC_PORT")"
+    [ -n "$h" ] && warn "'$h' still holds FLDIGI's port $FL_XMLRPC_PORT - close that program's windows before the next test."
+    info "Done. Received files: FLMSG forms in $NBEMS_DIR/ICS/messages, FLAMP files in $NBEMS_DIR/FLAMP/rx/<date>."
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+
+step "1/5 Making room"
+if pgrep -f "fldigi --config-dir $FLDIGI_DIR/" >/dev/null 2>&1 || sink_module_loaded "$FL_SINK"; then
+    info "The FLDIGI station is already running - stopping it first."
+    timeout 90 "$_here/sdrangel-rx-stop" fldigi | grep -E "Closed|Stopped|Removed" | sed 's/^/  /'
+fi
+if port_in_use "$FL_XMLRPC_PORT"; then
+    h="$(port_holders "$FL_XMLRPC_PORT")"
+    CLEANED=1
+    die "FLDIGI's control port $FL_XMLRPC_PORT is held by: ${h:-another program}
+  This is usually a browser window FLMSG opened to show a form. Close it and start the test again."
+fi
+
+step "2/5 Starting the receive-only FLDIGI + FLMSG + FLAMP"
+"$_here/websdr-fldigi-start" --no-route 2>&1 | grep -E "ERROR|guard|Started|TxID" | sed 's/^/  /'
+for _ in $(seq 1 40); do rpc 'f.fldigi.version()' >/dev/null && break; sleep 1; done
+rpc 'f.fldigi.version()' >/dev/null || die "FLDIGI didn't come up (see $DATA_DIR/fldigi/fldigi.log)."
+sleep 4   # let FLMSG and FLAMP connect
+rpc "f.modem.set_by_name('$MODEM'); f.modem.set_carrier($CARRIER); f.main.set_afc(False); f.main.set_reverse(False); f.main.set_txid(False); f.text.clear_rx()" \
+    || warn "couldn't set FLDIGI's mode over XML-RPC."
+info "  FLDIGI: $(rpc "print(f.modem.get_name(), '@', f.modem.get_carrier(), '| AFC', 'on' if f.main.get_afc() else 'off', '| RxID', 'on' if f.main.get_rsid() else 'off', '| TxID', 'on' if f.main.get_txid() else 'off')")"
+pgrep -f "flamp --config-dir $NBEMS_DIR/" >/dev/null && info "  FLAMP running." || warn "FLAMP didn't start."
+pgrep -f "flmsg --flmsg-dir $NBEMS_DIR/" >/dev/null && info "  FLMSG running." || warn "FLMSG didn't start."
+
+step "3/5 Speaker loopback"
+pactl load-module module-loopback source="$FL_SINK.monitor" latency_msec=100 source_dont_move=true \
+    sink_input_properties=media.name="$LOOP_NAME" >/dev/null && info "  You'll hear the test through the speakers."
+
+step "4/5 Ready - PLAY THE TEST VIDEO IN YOUR BROWSER NOW"
+info "  FLDIGI  https://youtu.be/ChaHOpwouJw?t=997"
+info "  FLMSG   https://youtu.be/8W7oApIU4O8?t=737"
+info "  FLAMP   https://youtu.be/TFRbFlx2uZo?t=928"
+info "  Don't click the waterfall (a middle-click turns AFC on). RxID changes modes by itself."
+info ""
+info "  >>> Press Enter here when the test is finished <<<"
+
+while :; do
+    tgt="$(sink_index "$FL_SINK")"
+    while read -r id cur; do
+        if [ -n "$id" ] && [ -n "$tgt" ] && [ "$cur" != "$tgt" ]; then
+            pactl move-sink-input "$id" "$FL_SINK" 2>/dev/null && info "  $(date +%T) browser audio -> FLDIGI"
+        fi
+    done < <(browser_streams)
+    if [ "$(rpc 'print(int(f.main.get_afc()))')" = 1 ]; then
+        rpc "f.main.set_afc(False); f.modem.set_carrier($CARRIER)"
+        info "  $(date +%T) AFC was switched on - turned it off and re-centered at $CARRIER Hz"
+    fi
+    read -r -t 2 _; rc=$?
+    [ "$rc" -le 128 ] && break    # Enter, or the end of input; above 128 means it timed out
+done
+
+step "5/5 Files received in the last hour"
+find "$NBEMS_DIR/ICS/messages" "$NBEMS_DIR/FLAMP/rx" -type f -mmin -60 2>/dev/null | sed 's/^/  /'
+true

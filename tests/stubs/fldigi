@@ -3,7 +3,7 @@
 
 Behaves like the real thing in the ways the launchers depend on: it is started
 with --config-dir DIR/ and --xmlrpc-server-port PORT, serves XML-RPC on that
-port, starts the FLAMP and Prog 1 (FLMSG) autostart programs named in
+port (including the handful of modem/main calls the launchers make), starts the FLAMP and Prog 1 (FLMSG) autostart programs named in
 DIR/fldigi_def.xml, and exits when told to over XML-RPC (fldigi.terminate).
 It records the PulseAudio devices it was given (PULSE_SOURCE/PULSE_SINK) in
 DIR/stub-audio.txt. Like the real program it dies on SIGHUP.
@@ -39,4 +39,22 @@ def terminate(_flags):
     threading.Timer(0.2, lambda: os._exit(0)).start()
     return None
 srv.register_function(terminate, "fldigi.terminate")
+
+# Modem and main-window state. TxID starts ON, as the real FLDIGI can, despite its settings.
+st = {"modem": "BPSK31", "carrier": 1500, "afc": True, "reverse": False, "txid": True, "rsid": True}
+def setter(key):
+    def f(v):
+        st[key] = v
+        return None
+    return f
+for name, fn in (
+        ("fldigi.version", lambda: "stub"),
+        ("modem.set_by_name", setter("modem")), ("modem.get_name", lambda: st["modem"]),
+        ("modem.set_carrier", setter("carrier")), ("modem.get_carrier", lambda: st["carrier"]),
+        ("main.set_afc", setter("afc")), ("main.get_afc", lambda: st["afc"]),
+        ("main.set_reverse", setter("reverse")), ("main.get_reverse", lambda: st["reverse"]),
+        ("main.set_txid", setter("txid")), ("main.get_txid", lambda: st["txid"]),
+        ("main.set_rsid", setter("rsid")), ("main.get_rsid", lambda: st["rsid"]),
+        ("text.clear_rx", lambda: None)):
+    srv.register_function(fn, name)
 srv.serve_forever()

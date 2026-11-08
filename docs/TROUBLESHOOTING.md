@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Logs: `~/.local/share/websdr-js8/js8call.log`, `commstat.log`, and `fldigi/fldigi.log`.
+Logs: `~/.local/share/websdr-js8/js8call.log`, `commstat.log`, `sdrangel.log`, and `fldigi/fldigi.log`.
 Run `./preflight.sh` any time for a read-only health check of the machine.
 
 ## The installer stops with FAIL items
@@ -92,3 +92,48 @@ a normal FLDIGI instead.
 Rig control, PTT, spotting, ports and audio settings are re-applied at every start, by
 design. Other changes (modem settings, colors, macros) are kept, provided FLDIGI is closed
 with `websdr-fldigi-stop` or its own File > Exit.
+
+## "Start fldigi before flamp", or "port 7363 is already in use"
+
+Something other than this station's FLDIGI holds its XML-RPC port - almost always a
+browser window that FLMSG opened to show a received form. Close every window of that
+browser and start again. To see who holds it: `ss -ltnp 'sport = :7363'`.
+
+## MFSK-32 / FLMSG / FLAMP decodes are garbled
+
+Usually **AFC**: the carrier wandered 15-30 Hz off (watch the number in FLDIGI's carrier
+box). Turn the *AFC* button off and click the signal's center once. A middle-click on the
+waterfall toggles AFC without you noticing. Also check reverse (*Rv*) is off for USB.
+
+## RTTY settings (baud, shift) go back to 45/170
+
+FLDIGI 4.2 keeps the RTTY baud and shift in `fldigi.prefs` (`rtty_baud`, `rtty_shift`) as
+well as in `fldigi_def.xml` (`RTTYBAUD`, `RTTYSHIFT`), and `fldigi.prefs` wins at startup.
+They're index numbers, not values (for example baud `2` = 50, shift `10` = custom). Edit
+both with FLDIGI closed, or set them in *Configure > Modems > RTTY* and exit FLDIGI with
+File > Exit or `websdr-fldigi-stop` so it saves. Many utility RTTY stations (e.g. weather
+broadcasts) also need *Rv* on.
+
+## A browser video is silent after a test
+
+The browser's audio was left pointed at a virtual device. Stopping the station (or ending
+the receive test) moves it back and clears PipeWire's saved routing. If it's still silent,
+pick your speakers for that tab in the sound settings, or reload the page.
+
+## SDRangel: "already open before the station started"
+
+SDRangel lists audio devices only when it starts. Close it (File > Exit) and click the
+start icon again - the launcher starts it at the right moment.
+
+## SDRangel: the KiwiSDR won't connect
+
+The launcher reports the KiwiSDR status. "Error": try another server, and use the server's
+own `host:8073` address rather than a `*.proxy.kiwisdr.com` one. "Dropped the connection":
+the server is full or has a time limit for visitors; try another. "First device is not
+KiwiSDR": add a KiwiSDR receiver in SDRangel as the first device set (see USAGE.md).
+
+## SDRangel: JS8Call's meter is pinned near the top
+
+Turn the SSB demodulator's AGC on and its volume down (0.15 gives about 38 dB). A
+demodulator created by the launcher starts that way; an existing one keeps your settings.
+The speaker loopback's volume has no effect on the decoder.
