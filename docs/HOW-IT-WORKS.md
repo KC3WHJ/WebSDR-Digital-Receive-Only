@@ -89,9 +89,13 @@ bin/websdr-fldigi-start     FLDIGI + FLMSG + FLAMP launcher
 bin/websdr-fldigi-stop      its stopper
 bin/websdr-flmsg            FLMSG / FLAMP with the station's own folder and ports
 bin/websdr-flamp              (FLDIGI starts these)
+bin/sdrangel-rx-start       SDRangel-fed station launcher (js8 | fldigi)
+bin/sdrangel-rx-stop        its stopper
+bin/sdrangel-{js8,fldigi}-{start,stop}   one-word shortcuts for those
+bin/amrron-rx-test          one-click receive test for the FLDIGI station
 share/JS8Call-profile.ini.template
 share/seed_commstat.py      CommStat first-run configuration
-tests/run-tests.sh          110 checks; tests/stubs/ holds the JS8Call, FLDIGI, FLMSG and FLAMP stand-ins
+tests/run-tests.sh          144 checks; tests/stubs/ holds the JS8Call, FLDIGI, FLMSG, FLAMP and SDRangel stand-ins
 ```
 
 ## The FLDIGI station
@@ -130,3 +134,51 @@ tests/run-tests.sh          110 checks; tests/stubs/ holds the JS8Call, FLDIGI, 
   exit without saving its settings; a signal is only the fallback.
 - **FLAMP's option name**: its `--help` says `--confg-dir`, but the option FLAMP accepts
   is `--config-dir`, and it takes the NBEMS folder (FLAMP adds `FLAMP/` itself).
+- **TxID**: FLDIGI can bring its transmit-RSID button back on from its saved state even
+  with `TRANSMITRSID=0` in its settings, so the launcher also switches it off over XML-RPC
+  (`main.set_txid`) once FLDIGI answers.
+- **A busy port stops the start.** If something already listens on the station's XML-RPC
+  or ARQ port, FLMSG and FLAMP would talk to the wrong program (FLAMP says "start fldigi
+  before flamp"). The usual cause is a browser window FLMSG opened to show a form: started
+  from FLDIGI, it can inherit FLDIGI's listening socket and keep it after FLDIGI exits. The
+  launcher names the program holding the port and refuses to start.
+
+## Saved routing is forgotten at stop
+
+PipeWire's session manager, WirePlumber, remembers per application where its audio was
+last moved, in `~/.local/state/wireplumber/restore-stream` (a line like
+`Output/Audio:application.name:Chromium:target=websdr_fldigi`). Left there, the browser's
+next video can start out silent. Both stop commands remove lines that target their own
+device. WirePlumber keeps the file in memory and rewrites it, so it's stopped for a moment
+while the line is removed - only when there is one.
+
+## SDRangel launchers
+
+```
+ KiwiSDR (internet) -> SDRangel (KiwiSDR input -> SSB demodulator) -> station's virtual device -> decoder
+                                                                       '-> loopback "SDRangel-monitor" -> speakers
+```
+
+- **Order**: the station first (its device must exist), then SDRangel, which enumerates
+  audio devices only at launch. If SDRangel is already running, the launcher asks its REST
+  API (`GET /sdrangel/audio`) whether it can see the device, and stops with an explanation
+  if it can't.
+- **REST API** (`127.0.0.1:8091/sdrangel`): `GET /devicesets` finds device set 0 (must be a
+  KiwiSDR) and its SSB demodulator; `POST /deviceset/0/channel` adds one if missing;
+  `PATCH /deviceset/0/channel/N/settings` sets `audioDeviceName` (plus AGC, volume and
+  filter for a new channel only); `POST /deviceset/0/device/run` starts the stream; the
+  KiwiSDR report's `status` (2 = connected, 3 = error, 4 = disconnected) is checked.
+- **Stopping**: SDRangel's windows are closed by process id with `wmctrl -i -c` (like
+  clicking X, so it saves its settings), falling back to SIGTERM after 20 s; then the
+  loopback is unloaded and the station's own stop command runs.
+- **Switching** stations runs the other station's stop first, because SDRangel must
+  restart to see the new device anyway.
+
+## The receive test
+
+`amrron-rx-test` starts the FLDIGI station with `--no-route`, sets the modem over XML-RPC,
+then loops every 2 s until Enter: any sink-input whose `application.process.binary` is a
+known browser and isn't on FLDIGI's device is moved there, and if `main.get_afc()` is on it
+is switched off and the carrier re-centered. A trap on exit (Enter, closing the window,
+Ctrl+C) moves the browser back to the default output, removes the loopback, and runs
+`websdr-fldigi-stop`, which also clears the saved routing.

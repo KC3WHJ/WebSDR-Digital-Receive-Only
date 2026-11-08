@@ -162,6 +162,18 @@ step "FLDIGI (settings: $FLDIGI_DIR)"
 if fldigi_running; then
     info "Already running."
 else
+    # Something else on this station's control ports would leave FLMSG/FLAMP unable to reach
+    # FLDIGI ("start fldigi before flamp"). The usual culprit is a browser window FLMSG opened
+    # to show a form: it can inherit FLDIGI's listening socket and keep it after FLDIGI closes.
+    for p in "$FL_XMLRPC_PORT" "$FL_ARQ_PORT"; do
+        if port_in_use "$p"; then
+            h="$(port_holders "$p")"
+            die "port $p (this station's FLDIGI) is already in use${h:+ by: $h}.
+  If that's a web browser, it's probably a window FLMSG opened to show a form: close every
+  window of that browser, then start again. Otherwise set another FL_XMLRPC_PORT / FL_ARQ_PORT
+  in $CONFIG_DIR/config."
+        fi
+    done
     # PULSE_SOURCE/PULSE_SINK choose FLDIGI's input and output devices. Same detach as the
     # JS8Call station (setsid -f + nohup), so closing this terminal can't close FLDIGI.
     PULSE_SOURCE="$FL_SINK.monitor" PULSE_SINK="$FL_TXVOID" \
@@ -171,6 +183,14 @@ else
             --rx-ipc-key "$FL_IPC_KEY" \
             >"$FL_DATA/fldigi.log" 2>&1 </dev/null
     info "Started (log: $FL_DATA/fldigi.log). FLMSG and FLAMP open with it."
+fi
+# Transmit RSID (TxID) can come back on from FLDIGI's saved button state even with
+# TRANSMITRSID=0 in its settings, so switch it off directly once FLDIGI answers.
+for _ in $(seq 1 30); do fldigi_rpc "$FL_XMLRPC_PORT" 'f.fldigi.version()' >/dev/null && break; sleep 1; done
+if fldigi_rpc "$FL_XMLRPC_PORT" 'f.main.set_txid(False); sys.exit(1 if f.main.get_txid() else 0)'; then
+    info "Transmit RSID (TxID) is off."
+else
+    warn "couldn't confirm FLDIGI's TxID is off (FLDIGI not answering on port $FL_XMLRPC_PORT yet?)."
 fi
 
 # ----------------------------------------------------------------- routing

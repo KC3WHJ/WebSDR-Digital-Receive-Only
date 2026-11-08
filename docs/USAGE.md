@@ -107,3 +107,103 @@ launcher. The FLDIGI station can also run beside a normal, radio-connected FLDIG
 |---|---|
 | `websdr-fldigi-start --no-route` | Start FLDIGI, FLMSG and FLAMP but skip the audio-routing step. |
 | `websdr-fldigi-start` again | Safe at any time: re-routes the audio and reuses everything already running. |
+
+## Trying the FLDIGI station: the one-click receive test
+
+No web SDR, no net on the air? `amrron-rx-test` (the *AmRRON Receive Test* icon) tests the
+whole FLDIGI + FLMSG + FLAMP chain with recorded transmissions from AmRRON's "Receiving HF
+Digital" videos on YouTube:
+
+1. Click the icon. It stops the FLDIGI station if it's running, checks FLDIGI's control
+   port is free, starts the station set to Contestia 4/250 at 900 Hz with AFC, reverse and
+   TxID off, and adds a speaker loopback so you hear the test.
+2. Open one of these in your browser and play it from the time shown:
+
+   | Test | Video |
+   |---|---|
+   | FLDIGI (Contestia, then MFSK-32 by RSID) | <https://youtu.be/ChaHOpwouJw?t=997> |
+   | FLMSG form | <https://youtu.be/8W7oApIU4O8?t=737> |
+   | FLAMP file | <https://youtu.be/TFRbFlx2uZo?t=928> |
+
+   While the test runs, every new audio stream from the browser is moved into FLDIGI (no
+   menu to pick from), and AFC is switched back off if it gets turned on.
+3. Watch FLDIGI decode. A received form opens in FLMSG; FLAMP shows the file in its
+   *Receive* tab (select it and click *Save*, or let FLAMP save it).
+4. Press Enter in the test window (or close it). The browser goes back to your speakers,
+   its saved routing is cleared so the next video plays normally, the station is stopped,
+   and files received in the last hour are listed.
+
+Don't click in the waterfall during the test (a middle-click toggles AFC, a left-click
+moves the carrier). If the squelch hides weak text, lower it.
+
+## SDRangel instead of a browser
+
+[SDRangel](https://www.sdrangel.org/) can listen to a KiwiSDR directly, with better
+filters and AGC than a browser tab. This project doesn't install it; if you have it, the
+installer adds start/stop shortcuts for each station:
+
+| Command (and icon) | Does |
+|---|---|
+| `sdrangel-js8-start` / `sdrangel-js8-stop` | JS8Call + CommStat fed by SDRangel |
+| `sdrangel-fldigi-start` / `sdrangel-fldigi-stop` | FLDIGI + FLMSG + FLAMP fed by SDRangel |
+
+**Once, before the first use:** open SDRangel, add a KiwiSDR receiver (the *+* / *Add Rx
+device* button, then *KiwiSDR*), type a server address as `host:8073` and tune it. SDRangel
+remembers it. Find servers on the map at <http://rx.linkfanel.net> or <https://kiwisdr.com>;
+use a server's own `host:8073` address - in testing, `*.proxy.kiwisdr.com` addresses gave
+SDRangel an error.
+
+**What start does, in order:**
+
+1. Starts the station (`websdr-js8-start --no-route` or `websdr-fldigi-start --no-route`),
+   which creates its virtual audio device.
+2. Starts SDRangel. This has to come second: SDRangel lists audio devices only when it
+   starts, so it can't use a device created after it opened.
+3. Over SDRangel's REST API (127.0.0.1:8091) it points the SSB demodulator's audio at the
+   station's device - adding a demodulator (USB, 300-3000 Hz, AGC on, volume 0.15) if
+   there isn't one - and starts the KiwiSDR stream.
+4. Adds a speaker loopback (`SDRangel-monitor` in the sound mixer) so you hear it too.
+   Its volume doesn't affect the decoder. `SDRANGEL_LISTEN=0` turns it off;
+   `SDRANGEL_LISTEN_GAIN=20dB` makes it quieter.
+
+**One station at a time:** SDRangel's demodulator feeds one decoder, so starting one
+station stops the other (and restarts SDRangel). **Stop** closes SDRangel the normal way,
+so it saves its settings, before the station's device is removed.
+
+**Levels:** AGC on with volume 0.15 gives about 38 dB on JS8Call's meter - right in the
+middle. With AGC off at full volume it clips (87 dB). An existing demodulator keeps your
+own volume and filter; only its audio output is changed.
+
+**Tuning:** set the KiwiSDR device's frequency in SDRangel to the dial frequency (e.g.
+7.078 MHz for JS8, 7.110 MHz for an AmRRON 40 m net) with the demodulator in USB at 0 Hz
+offset. Neither decoder has rig control here, so if you change band in SDRangel, change
+the dial frequency shown in JS8Call or FLDIGI to match.
+
+If SDRangel was already open before you clicked start, the launcher says so and stops:
+close SDRangel and click again.
+
+## Setting FLDIGI up for an AmRRON net
+
+AmRRON's frequencies, modes and net schedule come from its **Communications SOI** and the
+**AIB White Paper**, which members get from AmRRON. The SOI may only be shared with its
+author's permission, so this project doesn't include it. Here is how to put your copy's
+settings into FLDIGI. Do it with FLDIGI **closed** (it rewrites its files when it exits),
+in `~/.fldigi-websdr` for this station and in `~/.fldigi` for your radio FLDIGI.
+
+- **Frequency list** (`frequencies2.txt`, FLDIGI's *Open List*): one line per entry,
+
+  ```
+  rfcarrier rig_mode carrier mode_name usage
+  7110000 USB 900 Cont-4/250 Check-in
+  ```
+
+  where `rfcarrier` is the dial frequency in Hz and `carrier` is the audio offset on the
+  waterfall. `mode_name` must be FLDIGI's short mode name exactly (`Cont-4/250`, `MFSK32`,
+  `MFSK64`, `BPSK31`, `MT63-2KL`, `FSQ`, ...). FLDIGI silently turns a name it doesn't know
+  into BPSK31. Back up the file first.
+- **Waterfall position:** use the offset your SOI gives. Untick *Configure > Modems >
+  Start new modems at sweet spot*, or FLDIGI moves every new mode to its own default.
+- **AFC off** (the *AFC* button, saved at exit), especially for MFSK-32 traffic.
+- **RxID on, TxID off** for listening. The station switches TxID off at every start.
+- **FLMSG:** the SOI's custom forms go in `~/.nbems-websdr/CUSTOM` (copied from
+  `~/.nbems/CUSTOM` at first start).

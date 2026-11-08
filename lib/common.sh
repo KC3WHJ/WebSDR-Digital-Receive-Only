@@ -2,7 +2,7 @@
 # Shared helpers for install.sh, preflight.sh, uninstall.sh and the launchers.
 # Source this file; it does nothing on its own.
 
-WEBSDR_JS8_VERSION="0.2.0"
+WEBSDR_JS8_VERSION="0.3.0"
 
 if [ -t 1 ]; then
     C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_DIM=$'\e[2m'; C_BLD=$'\e[1m'; C_OFF=$'\e[0m'
@@ -116,6 +116,35 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # True if something is listening on the given local TCP port.
 port_in_use() { ss -tln 2>/dev/null | awk -v p=":$1" '$4 ~ p"$" {f=1} END{exit !f}'; }
+
+# Which programs are listening on a local TCP port (names only; empty if none, or not ours to see).
+port_holders() { ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'users:(("[^"]*"' | sed 's/^users:(("//; s/"$//' | sort -u | paste -sd' ' -; }
+
+# Run one Python statement against an FLDIGI's XML-RPC server, as `f`. Exit status says if it worked.
+#   fldigi_rpc PORT 'print(f.modem.get_name())'
+fldigi_rpc() {  # port statement
+    timeout 6 python3 -I -c "import sys, xmlrpc.client as x; f = x.ServerProxy('http://127.0.0.1:%s' % sys.argv[1]); $2" "$1" 2>/dev/null
+}
+
+# PipeWire/WirePlumber remembers, per application, the last sink its audio was moved to
+# (~/.local/state/wireplumber/restore-stream), so after a browser tab was routed into one of
+# these virtual devices that browser's NEXT video can start out silent, sent to a device that
+# no longer exists. Forget any application's saved target of this sink. WirePlumber holds the
+# file in memory and rewrites it, so it is briefly stopped while the line is removed (your
+# other audio blips for a moment - only when there is something to clear).
+forget_stream_targets() {  # sink
+    local f="${XDG_STATE_HOME:-$HOME/.local/state}/wireplumber/restore-stream" pat
+    pat="^Output/Audio:.*:target=$1\$"
+    [ -f "$f" ] && grep -q "$pat" "$f" || return 0
+    if have systemctl && systemctl --user is-active --quiet wireplumber 2>/dev/null; then
+        systemctl --user stop wireplumber
+        sed -i "\#$pat#d" "$f"
+        systemctl --user start wireplumber
+    else
+        sed -i "\#$pat#d" "$f"
+    fi
+    info "Cleared the saved routing that sent an app's audio to $1."
+}
 
 # Is a PulseAudio/PipeWire null-sink module with exactly this sink name loaded?
 # (Checks the module list, which updates the instant load-module returns,

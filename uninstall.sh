@@ -40,13 +40,19 @@ step "Stopping anything that is running"
 if [ -x "$BIN_DIR/websdr-js8-stop" ]; then "$BIN_DIR/websdr-js8-stop" || true
 else info "JS8Call launchers not found - skipping."; fi
 if [ -x "$BIN_DIR/websdr-fldigi-stop" ]; then "$BIN_DIR/websdr-fldigi-stop" || true; fi
+# An SDRangel feeding either station is left running (it's your program, not this project's);
+# only the speaker loopback the SDRangel launchers added is removed.
+for m in $(pactl list modules short 2>/dev/null | awk -v n="${SDRANGEL_LOOP_NAME:-SDRangel-monitor}" '$2=="module-loopback" && index($0, "media.name=" n) {print $1}'); do
+    pactl unload-module "$m" 2>/dev/null || true
+done
 
 step "Removing launchers, shortcuts and settings"
-for f in websdr-js8-start websdr-js8-stop websdr-fldigi-start websdr-fldigi-stop; do
+for f in websdr-js8-start websdr-js8-stop websdr-fldigi-start websdr-fldigi-stop amrron-rx-test \
+         sdrangel-js8-start sdrangel-js8-stop sdrangel-fldigi-start sdrangel-fldigi-stop; do
     rm -fv "$BIN_DIR/$f" "$DATA_HOME/applications/$f.desktop" "$DESK/$f.desktop"
 done
-rm -fv "$BIN_DIR/websdr-js8-watch-sink" "$BIN_DIR/websdr-flmsg" "$BIN_DIR/websdr-flamp"
-rm -rf "$DATA_DIR/app" "$DATA_DIR/js8call.log" "$DATA_DIR/commstat.log" "$DATA_DIR/routing-watcher.log" "$DATA_DIR/fldigi"
+rm -fv "$BIN_DIR/websdr-js8-watch-sink" "$BIN_DIR/websdr-flmsg" "$BIN_DIR/websdr-flamp" "$BIN_DIR/sdrangel-rx-start" "$BIN_DIR/sdrangel-rx-stop"
+rm -rf "$DATA_DIR/app" "$DATA_DIR/js8call.log" "$DATA_DIR/commstat.log" "$DATA_DIR/routing-watcher.log" "$DATA_DIR/fldigi" "$DATA_DIR/sdrangel.log"
 rm -rf "$CONFIG_DIR"
 info "Removed the app files and $CONFIG_DIR"
 

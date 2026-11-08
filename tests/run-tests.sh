@@ -39,6 +39,11 @@ export WEBSDR_JS8_FL_SINK=rxtest_fl_sink WEBSDR_JS8_FL_TXVOID=rxtest_fl_txvoid
 export WEBSDR_JS8_FL_XMLRPC_PORT="$FLX" WEBSDR_JS8_FL_ARQ_PORT="$FLA"
 export WEBSDR_JS8_FL_KISS_IO_PORT="$(free_port)" WEBSDR_JS8_FL_KISS_OUT_PORT="$(free_port)"
 export PATH="$ROOT/tests/stubs:$PATH"
+# SDRangel stand-in: its own program name, REST port and loopback name, so a real SDRangel
+# (and its speaker loopback) running on this machine is never touched.
+SDRP="$(free_port)"
+export SDRANGEL_BIN=sdrangel-stub SDRANGEL_LOOP_NAME=rxtest-monitor SDRANGEL_STUB_PORT="$SDRP"
+export SDRANGEL_API="http://127.0.0.1:$SDRP/sdrangel" SDRANGEL_STUB_STATE="$T/sdrangel-state.json"
 CS="$HOME/.local/share/websdr-js8/CommStat"
 INI="$HOME/.config/JS8Call - RxTest.ini"
 START="$HOME/.local/bin/websdr-js8-start"; STOP="$HOME/.local/bin/websdr-js8-stop"
@@ -55,9 +60,11 @@ cleanup() {
     for p in $(pgrep -f "/js8call -r RxTest( |\$)") $(pgrep -f "python3 $CS/little_gucci.py") \
              $(pgrep -f "websdr-js8-watch-sink rxtest_sink") $(pgrep -f "paplay.*$T/tone.wav") \
              $(pgrep -f "fldigi --config-dir $FLDIR/") $(pgrep -f "flmsg --flmsg-dir $NBDIR/") \
-             $(pgrep -f "flamp --config-dir $NBDIR/"); do
+             $(pgrep -f "flamp --config-dir $NBDIR/") $(pgrep -f "(^|/)sdrangel-stub( |\$)") \
+             $(pgrep -f "amrron-rx-test") $(pgrep -f "paplay.*$T/"); do
         kill "$p" 2>/dev/null
     done
+    for id in $(pactl list short modules 2>/dev/null | awk '$2=="module-loopback" && /media.name=rxtest-monitor/ {print $1}'); do pactl unload-module "$id" 2>/dev/null; done
     for s in rxtest_sink rxtest_txvoid rxtest_fl_sink rxtest_fl_txvoid; do
         for id in $(pactl list short modules 2>/dev/null | awk -v s="sink_name=$s" '$0 ~ s {print $1}'); do pactl unload-module "$id" 2>/dev/null; done
     done
@@ -68,12 +75,14 @@ trap cleanup EXIT
 # ------------------------------------------------------------------- lint
 section "Syntax"
 for f in install.sh uninstall.sh preflight.sh lib/common.sh bin/websdr-js8-start bin/websdr-js8-stop bin/websdr-js8-watch-sink \
-         bin/websdr-fldigi-start bin/websdr-fldigi-stop bin/websdr-flmsg bin/websdr-flamp tests/run-tests.sh; do
+         bin/websdr-fldigi-start bin/websdr-fldigi-stop bin/websdr-flmsg bin/websdr-flamp tests/run-tests.sh \
+         bin/sdrangel-rx-start bin/sdrangel-rx-stop bin/sdrangel-js8-start bin/sdrangel-js8-stop \
+         bin/sdrangel-fldigi-start bin/sdrangel-fldigi-stop bin/amrron-rx-test; do
     t "bash -n $f" bash -n "$ROOT/$f"
 done
 # (parse only - py_compile would write .pyc files into the repo)
 t "python syntax share/seed_commstat.py" python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$ROOT/share/seed_commstat.py"
-for f in js8call fldigi flmsg flamp; do
+for f in js8call fldigi flmsg flamp sdrangel-stub; do
     t "python syntax tests/stubs/$f" python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$ROOT/tests/stubs/$f"
 done
 
@@ -382,6 +391,9 @@ RADIO_XML_END
     [ "$(cat "$HOME/.fldigi/fldigi_def.xml" "$HOME/.fldigi/fldigi.prefs" "$HOME/.nbems/FLMSG.prefs" "$HOME/.nbems/FLAMP/FLAMP.prefs" | md5sum)" = "$radio_sum" ] \
         && ok "the normal ~/.fldigi and ~/.nbems settings are untouched" || bad "radio settings were modified!"
 
+    [ "$(fldigi_rpc "$FLX" 'print(int(f.main.get_txid()))')" = 0 ] \
+        && ok "transmit RSID (TxID) switched off over XML-RPC after start" || bad "TxID still on after start"
+
     "$FLSTART" --no-route >/dev/null 2>&1
     { [ "$(count_procs "fldigi --config-dir $FLDIR/")" = 1 ] && [ "$(modules_for rxtest_fl_sink)" = 1 ]; } \
         && ok "starting twice reuses everything" || bad "second FLDIGI start duplicated something"
@@ -390,6 +402,29 @@ RADIO_XML_END
     { [ -z "$(fl_pid)" ] && [ -z "$(flmsg_pid)" ] && [ -z "$(flamp_pid)" ] && [ "$(modules_for rxtest_fl_sink)" = 0 ] && [ "$(modules_for rxtest_fl_txvoid)" = 0 ]; } \
         && ok "stop ends FLDIGI, FLMSG, FLAMP and removes both sinks" || bad "FLDIGI stop left something" "$out"
     echo "$out" | grep -q "without saving\|forced" && bad "FLDIGI wasn't closed gracefully" "$out" || ok "FLDIGI is closed through XML-RPC (so it saves its settings)"
+
+    # Something else (e.g. a browser window FLMSG opened) holding FLDIGI's port must stop the start.
+    python3 -c "
+import socket,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', $FLX)); s.listen(1); time.sleep(30)" &
+    BLOCK_PID=$!; sleep 0.7
+    out="$("$FLSTART" --no-route 2>&1)"; rc=$?
+    kill "$BLOCK_PID" 2>/dev/null; wait "$BLOCK_PID" 2>/dev/null
+    { [ "$rc" != 0 ] && echo "$out" | grep -q "already in use by: python3" && [ -z "$(fl_pid)" ]; } \
+        && ok "refuses to start when its XML-RPC port is held, and names the program holding it" || bad "port-held start" "rc=$rc; $out"
+    "$FLSTOP" >/dev/null 2>&1
+
+    # WirePlumber's saved "this app -> FLDIGI's device" routing is forgotten at stop.
+    mkdir -p "$HOME/.local/state/wireplumber" "$T/fakesysd"
+    printf '[restore-stream]\nOutput/Audio:application.name:Chromium:target=rxtest_fl_sink\nOutput/Audio:application.name:Chromium:volume=1.0\nOutput/Audio:application.name:Firefox:target=other_sink\n' \
+        > "$HOME/.local/state/wireplumber/restore-stream"
+    printf '#!/bin/sh\necho "$*" >> "%s/systemctl.log"\n' "$T" > "$T/fakesysd/systemctl"; chmod +x "$T/fakesysd/systemctl"
+    out="$(PATH="$T/fakesysd:$PATH" "$FLSTOP" 2>&1)"
+    WPR="$HOME/.local/state/wireplumber/restore-stream"
+    { ! grep -q "target=rxtest_fl_sink" "$WPR" && grep -q "Chromium:volume" "$WPR" && grep -q "target=other_sink" "$WPR" \
+      && grep -q "stop wireplumber" "$T/systemctl.log" && grep -q "start wireplumber" "$T/systemctl.log"; } \
+        && ok "stop clears the browser's saved routing into FLDIGI's device (and nothing else)" || bad "saved routing not cleared" "$(cat "$WPR"; cat "$T/systemctl.log" 2>&1)"
+    rm -f "$WPR"
 
     # Rig control switched on later inside FLDIGI must be undone at the next start.
     sed -i 's|^<CHKUSEHAMLIBIS>.*|<CHKUSEHAMLIBIS>1</CHKUSEHAMLIBIS>|; s|^<USEPSKREP>.*|<USEPSKREP>1</USEPSKREP>|' "$FLDIR/fldigi_def.xml"
@@ -406,12 +441,91 @@ RADIO_XML_END
     "$FLSTOP" >/dev/null 2>&1
     { [ ! -e "$HOME/.fldigi" ] && [ ! -e "$HOME/.nbems" ]; } && ok "...without creating ~/.fldigi or ~/.nbems" || bad "created normal FLDIGI folders"
 
+    # ------------------------------------------------------- SDRangel launchers
+    section "SDRangel launchers (sdrangel-rx-start / sdrangel-rx-stop, with a stand-in SDRangel)"
+    SDSTART="$HOME/.local/bin/sdrangel-rx-start"; SDSTOP="$HOME/.local/bin/sdrangel-rx-stop"
+    sdr_pid() { pgrep -f "(^|/)sdrangel-stub( |\$)" | head -1; }
+    sdr_state() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(len(s["channels"]), s["channels"][0]["audioDeviceName"] if s["channels"] else "-", s["channels"][0].get("agc") if s["channels"] else "-", s["channels"][0].get("volume") if s["channels"] else "-", s["running"])' "$SDRANGEL_STUB_STATE" 2>/dev/null; }
+    loop_src() { pactl list short modules | awk '$2=="module-loopback" && /media.name=rxtest-monitor/' | grep -o 'source=[^ ]*' | sort | paste -sd' ' -; }
+    t "SDRangel launchers installed and executable" test -x "$SDSTART" -a -x "$SDSTOP" -a -x "$HOME/.local/bin/sdrangel-js8-start" -a -x "$HOME/.local/bin/sdrangel-fldigi-stop"
+    "$SDSTART" >/dev/null 2>&1; [ $? = 2 ] && ok "no mode given: usage message, exit 2" || bad "usage exit code"
+
+    out="$("$HOME/.local/bin/sdrangel-js8-start" 2>&1)"; rc=$?
+    [ "$rc" = 0 ] && ok "sdrangel-js8-start exits 0" || bad "sdrangel-js8-start failed (exit $rc)" "$out"
+    { [ -n "$(js8_pid)" ] && [ -n "$(sdr_pid)" ]; } && ok "JS8Call station and SDRangel both running" || bad "JS8Call/SDRangel not running" "$out"
+    [ "$(sdr_state)" = "1 rxtest_sink 1 0.15 True" ] \
+        && ok "SSB demodulator added: audio -> JS8Call's device, AGC on, volume 0.15; KiwiSDR started" || bad "SDRangel state" "$(sdr_state)"
+    [ "$(loop_src)" = "source=rxtest_sink.monitor" ] && ok "speaker loopback on JS8Call's device" || bad "loopback" "$(loop_src)"
+
+    # A volume tweak made in SDRangel must survive switching stations.
+    curl -s -X PATCH "$SDRANGEL_API/deviceset/0/channel/0/settings" -d '{"SSBDemodSettings":{"volume":0.5}}' >/dev/null
+    out="$("$HOME/.local/bin/sdrangel-fldigi-start" 2>&1)"; rc=$?
+    [ "$rc" = 0 ] && ok "sdrangel-fldigi-start exits 0" || bad "sdrangel-fldigi-start failed (exit $rc)" "$out"
+    { [ -z "$(js8_pid)" ] && [ "$(modules_for rxtest_sink)" = 0 ] && [ -n "$(fl_pid)" ]; } \
+        && ok "switching to FLDIGI stops the JS8Call station first" || bad "JS8Call station not stopped" "js8=$(js8_pid) sink=$(modules_for rxtest_sink)"
+    [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["starts"])' "$SDRANGEL_STUB_STATE")" = 2 ] \
+        && ok "SDRangel was restarted (so it can see FLDIGI's device)" || bad "SDRangel not restarted"
+    [ "$(sdr_state)" = "1 rxtest_fl_sink 1 0.5 True" ] \
+        && ok "existing demodulator re-pointed at FLDIGI's device, your volume kept" || bad "SDRangel state after switch" "$(sdr_state)"
+    [ "$(loop_src)" = "source=rxtest_fl_sink.monitor" ] && ok "loopback moved to FLDIGI's device (exactly one)" || bad "loopback after switch" "$(loop_src)"
+
+    out="$("$HOME/.local/bin/sdrangel-fldigi-stop" 2>&1)"
+    { [ -z "$(sdr_pid)" ] && [ -z "$(fl_pid)" ] && [ "$(modules_for rxtest_fl_sink)" = 0 ] && [ -z "$(loop_src)" ]; } \
+        && ok "stop closes SDRangel, the FLDIGI station and the loopback" || bad "SDRangel stop left something" "$out"
+
+    # SDRangel opened BEFORE the station's device existed can't use it: say so, don't half-work.
+    setsid -f sdrangel-stub >/dev/null 2>&1 </dev/null; sleep 1
+    out="$("$HOME/.local/bin/sdrangel-js8-start" 2>&1)"; rc=$?
+    { [ "$rc" != 0 ] && echo "$out" | grep -q "already open before"; } \
+        && ok "refuses when SDRangel was opened before the station's audio device existed" || bad "early SDRangel not caught" "rc=$rc; $out"
+    "$HOME/.local/bin/sdrangel-js8-stop" >/dev/null 2>&1
+    out="$(SDRANGEL_STUB_HW=RTLSDR "$HOME/.local/bin/sdrangel-js8-start" 2>&1)"; rc=$?
+    { [ "$rc" != 0 ] && echo "$out" | grep -q "not KiwiSDR"; } && ok "refuses when SDRangel's first device isn't a KiwiSDR" || bad "non-Kiwi not caught" "rc=$rc"
+    "$HOME/.local/bin/sdrangel-js8-stop" >/dev/null 2>&1
+    { [ -z "$(sdr_pid)" ] && [ -z "$(js8_pid)" ]; } && ok "...and stop cleans up after it" || bad "cleanup after refusal"
+
+    # ---------------------------------------------------- one-click receive test
+    section "One-click receive test (amrron-rx-test)"
+    RXT="$HOME/.local/bin/amrron-rx-test"
+    t "amrron-rx-test installed and executable" test -x "$RXT"
+    python3 -c "
+import socket,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', $FLX)); s.listen(1); time.sleep(30)" &
+    BLOCK_PID=$!; sleep 0.7
+    out="$("$RXT" </dev/null 2>&1)"; rc=$?
+    kill "$BLOCK_PID" 2>/dev/null; wait "$BLOCK_PID" 2>/dev/null
+    { [ "$rc" != 0 ] && echo "$out" | grep -q "held by: python3" && [ -z "$(fl_pid)" ]; } \
+        && ok "stops before starting anything when FLDIGI's port is held" || bad "port-held test" "rc=$rc; $out"
+
+    # A "browser" (paplay, for the test) playing on the normal output gets routed in; AFC
+    # switched on mid-test is switched off again; Enter ends it and cleans up.
+    python3 -c "
+import wave
+w = wave.open('$T/long.wav', 'w'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+w.writeframes(b'\x00\x10' * 8000 * 40); w.close()"
+    paplay "$T/long.wav" >/dev/null 2>&1 &
+    PLAY_PID=$!
+    out="$( { sleep 12; fldigi_rpc "$FLX" 'f.main.set_afc(True); f.modem.set_carrier(870)'; sleep 5; echo; } \
+            | AMRRON_TEST_BROWSERS="pacat|paplay" "$RXT" 2>&1 )"; rc=$?
+    [ "$rc" = 0 ] && ok "runs and exits 0 when Enter is pressed" || bad "amrron-rx-test exit $rc" "$out"
+    echo "$out" | grep -q "Cont-4/250 @ 900 | AFC off | RxID on | TxID off" \
+        && ok "FLDIGI set to Contestia 4/250 at 900 Hz, AFC off, TxID off" || bad "FLDIGI settings line" "$(echo "$out" | grep FLDIGI:)"
+    echo "$out" | grep -q "browser audio -> FLDIGI" && ok "the browser's audio was routed into FLDIGI" || bad "no routing" "$out"
+    echo "$out" | grep -q "AFC was switched on" && ok "AFC switched on mid-test was turned back off" || bad "AFC guard" "$out"
+    def_idx="$(pactl list short sinks | awk -v n="$(pactl get-default-sink)" '$2==n{print $1}')"
+    play_idx="$(pactl -f json list sink-inputs | python3 -c 'import json,sys; print(next((str(i["sink"]) for i in json.load(sys.stdin) if i["properties"].get("application.process.binary") in ("pacat","paplay")), ""))')"
+    { [ -z "$(fl_pid)" ] && [ "$(modules_for rxtest_fl_sink)" = 0 ] && [ -z "$(loop_src)" ] && [ "$play_idx" = "$def_idx" ]; } \
+        && ok "afterwards: station stopped, loopback gone, the browser back on the speakers" || bad "amrron-rx-test cleanup" "fl=$(fl_pid) sink=$(modules_for rxtest_fl_sink) loop=$(loop_src) play=$play_idx def=$def_idx"
+    kill "$PLAY_PID" 2>/dev/null
+
     # ------------------------------------------------------------ uninstall
     section "Uninstaller"
     out="$("$ROOT/uninstall.sh" --purge --yes 2>&1)"; rc=$?
     [ "$rc" = 0 ] && ok "uninstall exits 0" || bad "uninstall failed" "$out"
     { [ ! -e "$START" ] && [ ! -e "$STOP" ] && [ ! -e "$HOME/.config/websdr-js8" ] && [ ! -e "$INI" ] && [ ! -e "$CS" ]; } \
         && ok "removes launchers, settings, JS8Call profile and CommStat folder" || bad "uninstall left files behind" "$(find "$HOME" -type f | head)"
+    { [ ! -e "$HOME/.local/bin/sdrangel-rx-start" ] && [ ! -e "$HOME/.local/bin/sdrangel-js8-start" ] && [ ! -e "$HOME/.local/bin/amrron-rx-test" ]; } \
+        && ok "removes the SDRangel launchers and the receive test" || bad "uninstall left SDRangel launchers" "$(ls "$HOME/.local/bin" 2>&1)"
     { [ ! -e "$FLSTART" ] && [ ! -e "$FLSTOP" ] && [ ! -e "$HOME/.local/bin/websdr-flamp" ] && [ ! -e "$FLDIR" ] && [ ! -e "$NBDIR" ]; } \
         && ok "removes the FLDIGI launchers and the WebSDR FLDIGI/FLMSG/FLAMP folders" || bad "uninstall left FLDIGI files behind" "$(ls -a "$HOME" "$HOME/.local/bin" 2>&1)"
     "$ROOT/uninstall.sh" --purge --yes >/dev/null 2>&1 && ok "a second uninstall is harmless" || bad "second uninstall failed"

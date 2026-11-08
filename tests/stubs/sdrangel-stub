@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Stand-in for `sdrangel` used by the test suite (run as SDRANGEL_BIN=sdrangel-stub).
+
+Serves the parts of SDRangel's REST API the launchers use, on 127.0.0.1:$SDRANGEL_STUB_PORT,
+with one KiwiSDR device set ($SDRANGEL_STUB_HW overrides the hardware type). Like the real
+program it lists audio devices ONCE, when it starts (from `pactl list short sinks`), and keeps
+its device and channel settings between runs (in $SDRANGEL_STUB_STATE, a JSON file the tests
+also read). It exits on SIGTERM; it has no window.
+"""
+import json
+import os
+import re
+import subprocess
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+PORT = int(os.environ["SDRANGEL_STUB_PORT"])
+STATE = os.environ["SDRANGEL_STUB_STATE"]
+HW = os.environ.get("SDRANGEL_STUB_HW", "KiwiSDR")
+SINKS = [l.split("\t")[1] for l in subprocess.run(["pactl", "list", "short", "sinks"], capture_output=True,
+                                                   text=True).stdout.splitlines() if "\t" in l]
+try:
+    st = json.load(open(STATE))
+except Exception:
+    st = {"channels": [], "server": "kiwi.example:8073", "freq": 7078000}
+st["running"] = False
+st["starts"] = st.get("starts", 0) + 1
+def save():
+    with open(STATE, "w") as f:
+        json.dump(st, f)
+save()
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def reply(self, obj, code=200):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def body(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(n) or b"{}")
+    def do_GET(self):
+        p = self.path.rstrip("/")
+        if p == "/sdrangel":
+            return self.reply({"version": "stub"})
+        if p == "/sdrangel/audio":
+            return self.reply({"nbOutputDevices": len(SINKS), "outputDevices": [{"name": s} for s in SINKS]})
+        if p == "/sdrangel/devicesets":
+            chans = [{"index": i, "id": "SSBDemod"} for i, _ in enumerate(st["channels"])]
+            return self.reply({"devicesetcount": 1, "deviceSets": [{"samplingDevice": {"hwType": HW}, "channels": chans}]})
+        if p == "/sdrangel/deviceset/0/device/run":
+            return self.reply({"state": "running" if st["running"] else "idle"})
+        if p == "/sdrangel/deviceset/0/device/settings":
+            return self.reply({"kiwiSDRSettings": {"serverAddress": st["server"], "centerFrequency": st["freq"]}})
+        if p == "/sdrangel/deviceset/0/device/report":
+            return self.reply({"kiwiSDRReport": {"status": 2 if st["running"] else 0}})
+        self.reply({"message": "not found"}, 404)
+    def do_POST(self):
+        p = self.path.rstrip("/")
+        if p == "/sdrangel/deviceset/0/channel":
+            st["channels"].append({"audioDeviceName": "System default device", "agc": 0, "volume": 1.0}); save()
+            return self.reply({"message": "ok"}, 202)
+        if p == "/sdrangel/deviceset/0/device/run":
+            st["running"] = True; save()
+            return self.reply({"state": "running"})
+        self.reply({"message": "not found"}, 404)
+    def do_PATCH(self):
+        m = re.fullmatch(r"/sdrangel/deviceset/0/channel/(\d+)/settings", self.path.rstrip("/"))
+        if not m or int(m.group(1)) >= len(st["channels"]):
+            return self.reply({"message": "not found"}, 404)
+        ch = st["channels"][int(m.group(1))]
+        ch.update(self.body().get("SSBDemodSettings", {})); save()
+        self.reply({"channelType": "SSBDemod", "SSBDemodSettings": ch})
+
+HTTPServer(("127.0.0.1", PORT), H).serve_forever()
