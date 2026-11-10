@@ -185,6 +185,7 @@ STUB_MAIN_END
     t "profile: audio OUT = the discard sink"     grep -qx 'SoundOutName=rxtest_txvoid' "$INI"
     t "profile: API port from settings"           grep -qx "TCPServerPort=$TCP" "$INI"
     t "profile: callsign upper-cased"             grep -qx 'MyCall=N0CALL' "$INI"
+    t "profile: JS8Call groups = the CommStat groups" grep -qx 'MyGroups=@@AMRRON, @@COMMSTAT, @@GHOSTNET, @@MAGNET, @@NOMADNET, @@TTP' "$INI"
     db="$CS/traffic.db3"
     out="$(python3 -c "
 import sqlite3

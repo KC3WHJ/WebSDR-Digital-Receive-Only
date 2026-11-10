@@ -179,6 +179,10 @@ else
     tpl="${tpl//@PROFILE@/$PROFILE}";   tpl="${tpl//@DATA_HOME@/$DATA_HOME}"
     tpl="${tpl//@SINK@/$SINK}";         tpl="${tpl//@TXVOID@/$TXVOID}"
     tpl="${tpl//@TCP_PORT@/$TCP_PORT}"; tpl="${tpl//@UDP_PORT@/$UDP_PORT}"
+    # My Groups = the same list the CommStat groups come from (COMMSTAT_GROUPS or the default),
+    # in JS8Call's settings format: "@@NAME, @@NAME" (QSettings doubles a leading @).
+    mygroups="$(python3 "$HERE/share/seed_commstat.py" --groups | sed -E 's/[^ ]+/@@&/g; s/ /, /g')"
+    tpl="${tpl//@MYGROUPS@/$mygroups}"
     mkdir -p "$JS8_CONFIG_HOME"
     printf '%s\n' "$tpl" > "$JS8_INI"
     info "Wrote JS8Call profile: $JS8_INI  (no rig control, spotting off, transmit audio discarded)"

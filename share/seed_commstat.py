@@ -21,6 +21,7 @@ existing connector with the same name is left exactly as it is, and only
 missing groups are added (never removed).
 
 Usage: seed_commstat.py COMMSTAT_DIR CALLSIGN GRID STATE RIG_NAME TCP_PORT
+       seed_commstat.py --groups    (print the group list and exit)
 """
 import datetime
 import os
@@ -69,6 +70,10 @@ def add_groups(db_path):
 
 
 def main(argv):
+    if argv[1:] == ["--groups"]:
+        # For install.sh: the same list, for the JS8Call profile's My Groups.
+        print(" ".join(wanted_groups()))
+        return
     if len(argv) != 7:
         sys.exit(__doc__)
     commstat_dir, callsign, grid, state, rig_name, port = argv[1:]

@@ -9,6 +9,7 @@ AudioOutputChannel=Mono
 CATNetworkPort=
 CATSerialPort=
 MyCall=@CALLSIGN@
+MyGroups=@MYGROUPS@
 MyGrid=@GRID@
 PSKReporter=false
 SpotToAPRS=false
