@@ -185,18 +185,29 @@ STUB_MAIN_END
     t "profile: audio OUT = the discard sink"     grep -qx 'SoundOutName=rxtest_txvoid' "$INI"
     t "profile: API port from settings"           grep -qx "TCPServerPort=$TCP" "$INI"
     t "profile: callsign upper-cased"             grep -qx 'MyCall=N0CALL' "$INI"
+    t "profile: JS8Call groups = the CommStat groups" grep -qx 'MyGroups=@@AMRRON, @@COMMSTAT, @@GHOSTNET, @@MAGNET, @@NOMADNET, @@TTP' "$INI"
     db="$CS/traffic.db3"
     out="$(python3 -c "
 import sqlite3
 c=sqlite3.connect('file:$db?mode=ro',uri=True)
 print(c.execute('select callsign,gridsquare,state from controls').fetchone(), c.execute('select rig_name,tcp_port,auto_connect,rf_ack from js8_connectors').fetchall())")"
     [ "$out" = "('N0CALL', 'FN31', 'PA') [('WebSDR', $TCP, 1, 0)]" ] && ok "CommStat DB: user set, ONE connector, auto-connect on, RF Ack OFF" || bad "CommStat DB contents" "$out"
+    groups_in_db() { python3 -c "import sqlite3; print(' '.join(r[0] for r in sqlite3.connect('file:$db?mode=ro',uri=True).execute('select name from groups order by name')))"; }
+    out="$(groups_in_db)"
+    [ "$out" = "AMRRON COMMSTAT GHOSTNET MAGNET NOMADNET TTP" ] && ok "CommStat DB: default groups added" || bad "CommStat groups" "$out"
+    python3 -c "import sqlite3; c=sqlite3.connect('$db'); c.execute(\"delete from groups where name='TTP'\"); c.execute(\"insert into groups (name,comment,url1,url2,date_added) values ('MYNET','','','','2026-01-01')\"); c.commit()"
+    COMMSTAT_GROUPS="@ttp, mynet,averyverylongname" python3 "$ROOT/share/seed_commstat.py" "$CS" N0CALL FN31 PA WebSDR "$TCP" >/dev/null 2>&1
+    out="$(groups_in_db)"
+    [ "$out" = "AMRRON AVERYVER COMMSTAT GHOSTNET MAGNET MYNET NOMADNET TTP" ] && ok "COMMSTAT_GROUPS adds only missing groups (@ stripped, 8-char limit), keeps the user's own" || bad "COMMSTAT_GROUPS handling" "$out"
+    python3 -c "import sqlite3; c=sqlite3.connect('$db'); c.execute(\"delete from groups where name in ('MYNET','AVERYVER')\"); c.commit()"
 
     echo "# my own edit" >> "$INI"
     out="$("${IN[@]}" 2>&1)"; rc=$?
     { [ "$rc" = 0 ] && grep -q '# my own edit' "$INI"; } && ok "re-running keeps an existing profile (never overwrites your edits)" || bad "re-run clobbered the profile" "$out"
     n="$(python3 -c "import sqlite3; print(sqlite3.connect('file:$db?mode=ro',uri=True).execute('select count(*) from js8_connectors').fetchone()[0])")"
     [ "$n" = 1 ] && ok "re-running does not duplicate the connector" || bad "connector count after re-run: $n"
+    out="$(groups_in_db)"
+    [ "$out" = "AMRRON COMMSTAT GHOSTNET MAGNET NOMADNET TTP" ] && ok "re-running does not duplicate groups" || bad "groups after re-run" "$out"
     sed -i '/# my own edit/d' "$INI"
 
     out="$(HOME="$T/home2" "$ROOT/install.sh" --yes --skip-apt --skip-commstat-deps --no-network --no-gui-check --callsign N0CALL --grid ZZ99 </dev/null 2>&1)"; rc=$?

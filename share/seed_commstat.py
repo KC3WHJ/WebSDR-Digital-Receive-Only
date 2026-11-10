@@ -12,19 +12,68 @@ Run once by install.sh, after CommStat has been cloned. It:
     acknowledgement over the air when it receives a STATREP; there is no
     radio here, and an acknowledgement must never be triggered by traffic
     heard through someone else's receiver.
+  * adds the groups to follow (DEFAULT_GROUPS, or the COMMSTAT_GROUPS
+    environment variable: names separated by spaces or commas; set it to an
+    empty string to add none). Groups already in CommStat are left alone.
 
-It never overwrites anything: an existing database keeps its data, and an
-existing connector with the same name is left exactly as it is.
+It never overwrites anything: an existing database keeps its data, an
+existing connector with the same name is left exactly as it is, and only
+missing groups are added (never removed).
 
 Usage: seed_commstat.py COMMSTAT_DIR CALLSIGN GRID STATE RIG_NAME TCP_PORT
+       seed_commstat.py --groups    (print the group list and exit)
 """
+import datetime
 import os
+import re
 import shutil
 import sqlite3
 import sys
 
+DEFAULT_GROUPS = ["AMRRON", "COMMSTAT", "GHOSTNET", "MAGNET", "NOMADNET", "TTP"]
+MAX_GROUP_NAME_LENGTH = 8   # CommStat's own limit (constants.py)
+
+
+def wanted_groups():
+    env = os.environ.get("COMMSTAT_GROUPS")
+    names = DEFAULT_GROUPS if env is None else re.split(r"[\s,]+", env)
+    out = []
+    for n in names:
+        n = n.strip().lstrip("@").upper()[:MAX_GROUP_NAME_LENGTH]
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def add_groups(db_path):
+    """Add missing groups the way CommStat's Manage Groups dialog does."""
+    names = wanted_groups()
+    if not names:
+        print("No groups to add.")
+        return
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    added = []
+    with sqlite3.connect(db_path, timeout=10) as conn:
+        have = {r[0].upper() for r in conn.execute("SELECT name FROM groups") if r[0]}
+        for n in names:
+            if n not in have:
+                conn.execute(
+                    "INSERT INTO groups (name, comment, url1, url2, date_added) VALUES (?, '', '', '', ?)",
+                    (n, today),
+                )
+                added.append(n)
+        conn.commit()
+    if added:
+        print("Added CommStat groups: " + ", ".join(added))
+    else:
+        print("CommStat groups already present: " + ", ".join(names))
+
 
 def main(argv):
+    if argv[1:] == ["--groups"]:
+        # For install.sh: the same list, for the JS8Call profile's My Groups.
+        print(" ".join(wanted_groups()))
+        return
     if len(argv) != 7:
         sys.exit(__doc__)
     commstat_dir, callsign, grid, state, rig_name, port = argv[1:]
@@ -56,6 +105,8 @@ def main(argv):
         )
         conn.commit()
     print("Callsign/grid/state set (existing values kept).")
+
+    add_groups(db_path)
 
     # Use CommStat's own ConnectorManager so validation and defaults are exactly
     # what its JS8 Connectors dialog would produce.

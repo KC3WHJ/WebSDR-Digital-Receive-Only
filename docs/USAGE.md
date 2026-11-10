@@ -49,10 +49,15 @@ the middle of its range - not pinned at the top, and not near zero.
 ## CommStat
 
 CommStat's connector is created for you (named `WebSDR`, auto-connect on, RF Ack off).
+The installer also adds these groups (to CommStat, and to the new JS8Call profile's
+My Groups): AMRRON, COMMSTAT, GHOSTNET, MAGNET, NOMADNET and
+TTP. To install a different list, set `COMMSTAT_GROUPS` when running the installer,
+for example `COMMSTAT_GROUPS="AMRRON TTP" ./install.sh`; set it to `""` to add none.
+Groups you already have are kept, and re-running the installer never removes any.
 The first time, you may want to:
 
-- Use CommStat's **Manage Groups** dialog to add the groups/nets you follow, so their
-  messages are shown.
+- Use CommStat's **Manage Groups** dialog to add or remove groups/nets you follow, so
+  their messages are shown.
 - Optionally add a **QRZ** login (QRZ Settings) for callsign look-ups.
 
 (These dialogs are in CommStat's menus; the exact menu layout can change between CommStat versions.)
